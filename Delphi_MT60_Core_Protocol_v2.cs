@@ -108,6 +108,19 @@ namespace DelphiMT60
             if (en != null && en.Length >= 4 && en[0] == 0x5A && en[1] == 0x97)
                 p["Engine"] = Encoding.ASCII.GetString(en, 2, en.Length - 2).Trim();
 
+            // Part ID (1A 9F) — SPS log'da "PCH9STN#53" shu DID orqali keldi
+            byte[] pid = _transport.SendAndReceive(new byte[] { 0x1A, 0x9F });
+            if (pid != null && pid.Length >= 4 && pid[0] == 0x5A && pid[1] == 0x9F)
+                p["PartID"] = Encoding.ASCII.GetString(pid, 2, pid.Length - 2).Trim();
+
+            // VIN zaxira DID (1A 28) — agar 1A 90 ishlamasa
+            if (!p.ContainsKey("VIN"))
+            {
+                byte[] vin28 = _transport.SendAndReceive(new byte[] { 0x1A, 0x28 });
+                if (vin28 != null && vin28.Length >= 19 && vin28[0] == 0x5A && vin28[1] == 0x28)
+                    p["VIN"] = Encoding.ASCII.GetString(vin28, 2, 17);
+            }
+
             // TUZATILDI: ijobiylik (0x5A) tekshiriladi
             byte[] c0 = _transport.SendAndReceive(new byte[] { 0x1A, 0xC0 });
             if (c0 != null && c0.Length >= 6 && c0[0] == 0x5A) p["Cal_C0"] = BitConverter.ToString(c0, 2).Replace("-", "");
@@ -723,57 +736,138 @@ namespace DelphiMT60
     // =========================================================================================
     class Program
     {
+        static void Progress(int off, int tot)
+        {
+            Console.Write(string.Format("\r   {0,3:P0}  ({1:N0} / {2:N0} bayt)   ", (double)off / tot, off, tot));
+        }
+
         static void Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
             Console.WriteLine("==============================================================");
-            Console.WriteLine("  JAM DELPHI MT60 CORE PROTOCOL v2 (XAVFSIZ)");
+            Console.WriteLine("  JAM DELPHI MT60 MASTER v2 (XAVFSIZ) — Console");
+            Console.WriteLine("  Chevrolet Cobalt / Gentra / Ravon R3 — TC1766 1.5 MB");
             Console.WriteLine("==============================================================\n");
 
+            // J2534 DLL manzili
             string smDll = @"C:\Program Files (x86)\Scanmatik\smj2534.dll";
             if (!File.Exists(smDll))
             {
-                Console.WriteLine("Scanmatik smj2534.dll topilmadi. To'g'ri J2534 DLL manzilini kodga kiriting.");
-                return;
+                Console.Write("J2534 DLL topilmadi. To'liq manzilni kiriting (yoki Enter=chiqish):\n> ");
+                smDll = (Console.ReadLine() ?? "").Trim().Trim('"');
+                if (!File.Exists(smDll)) { Console.WriteLine("Fayl topilmadi. Chiqildi."); return; }
             }
 
+            DelphiMt60Client client = null;
             try
             {
-                using (var client = new DelphiMt60Client(smDll, Console.WriteLine))
+                client = new DelphiMt60Client(smDll, Console.WriteLine);
+                bool connected = false;
+
+                while (true)
                 {
-                    client.Connect();
+                    Console.WriteLine("\n==================== MENYU ====================");
+                    Console.WriteLine(" 1. Ulanish (Connect)" + (connected ? "   [ULANGAN]" : ""));
+                    Console.WriteLine(" 2. Identifikatsiya / VIN o'qish");
+                    Console.WriteLine(" 3. Full Flash O'QISH va saqlash (.bin)");
+                    Console.WriteLine(" 4. Full Flash YOZISH (stok/tyuning)  [backup+verify]");
+                    Console.WriteLine(" 5. VIN yozish (pasport)");
+                    Console.WriteLine(" 6. EEPROM o'qish/yozish        [komanda kutilmoqda]");
+                    Console.WriteLine(" 7. Zaslonka (drosel) reset     [komanda kutilmoqda]");
+                    Console.WriteLine(" 0. Chiqish");
+                    Console.Write("Tanlang: ");
+                    string ch = (Console.ReadLine() ?? "").Trim();
 
-                    var passport = client.ReadEcuPassport();
-                    Console.WriteLine("\n--- EBU PASPORTI ---");
-                    foreach (var kv in passport) Console.WriteLine(string.Format("  {0,-10}: {1}", kv.Key, kv.Value));
+                    try
+                    {
+                        if (ch == "0") break;
 
-                    Console.WriteLine("\n--- XAVFSIZLIK TEST ---");
-                    client.UnlockSecurityAccess(0x01);
-
-                    // --- Namuna: Full Flash O'QISH va saqlash ---
-                    // byte[] data = client.ReadFullFlash((off, tot) =>
-                    //     Console.Write(string.Format("\r  {0:P1}", (double)off / tot)));
-                    // File.WriteAllBytes("read_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".bin", data);
-
-                    // --- Namuna: Full Flash YOZISH (backup + verify + tasdiq bilan) ---
-                    // byte[] file = File.ReadAllBytes("yangi_proshivka.bin");
-                    // bool ok = client.WriteFullFlash(file,
-                    //     progress: (off, tot) => Console.Write(string.Format("\r  {0:P1}", (double)off / tot)),
-                    //     makeBackup: true,
-                    //     verifyAfter: true,
-                    //     confirm: p => {
-                    //         Console.Write("\nShu EBU va fayl OILASI mos keladimi? Yozishni tasdiqlaysizmi? (ha/yo'q): ");
-                    //         return Console.ReadLine()?.Trim().ToLower() == "ha";
-                    //     });
-                    // Console.WriteLine(ok ? "\nYOZISH OK (verify o'tdi)." : "\nYOZISH BEKOR/XATO — backupni tekshiring.");
+                        if (ch == "1")
+                        {
+                            client.Connect();
+                            connected = true;
+                        }
+                        else if (ch == "2")
+                        {
+                            if (!Require(connected)) continue;
+                            var p = client.ReadEcuPassport();
+                            Console.WriteLine("\n--- EBU PASPORTI ---");
+                            if (p.Count == 0) Console.WriteLine("  (Hech narsa o'qilmadi — EBU holati yoki ulanishni tekshiring)");
+                            foreach (var kv in p) Console.WriteLine(string.Format("  {0,-8}: {1}", kv.Key, kv.Value));
+                        }
+                        else if (ch == "3")
+                        {
+                            if (!Require(connected)) continue;
+                            Console.WriteLine("O'qish boshlanmoqda (bir necha daqiqa)...");
+                            byte[] data = client.ReadFullFlash(Progress);
+                            string name = string.Format("read_{0:yyyyMMdd_HHmmss}.bin", DateTime.Now);
+                            File.WriteAllBytes(name, data);
+                            Console.WriteLine("\nSaqlandi: " + Path.GetFullPath(name) + " (" + data.Length + " bayt)");
+                        }
+                        else if (ch == "4")
+                        {
+                            if (!Require(connected)) continue;
+                            Console.Write("Yoziladigan .bin fayl manzili: ");
+                            string fp = (Console.ReadLine() ?? "").Trim().Trim('"');
+                            if (!File.Exists(fp)) { Console.WriteLine("Fayl topilmadi."); continue; }
+                            byte[] file = File.ReadAllBytes(fp);
+                            if (file.Length != DelphiMt60Client.FULL_FLASH_15MB)
+                            {
+                                Console.WriteLine(string.Format("DIQQAT: fayl {0} bayt, kutilgan {1} bayt. Bekor qilindi.",
+                                    file.Length, DelphiMt60Client.FULL_FLASH_15MB));
+                                continue;
+                            }
+                            Console.WriteLine("Rejim: backup=ON, verify=ON.");
+                            bool ok = client.WriteFullFlash(file, Progress, true, true, p =>
+                            {
+                                Console.WriteLine("\n--- EBU PASPORTI ---");
+                                foreach (var kv in p) Console.WriteLine(string.Format("  {0,-8}: {1}", kv.Key, kv.Value));
+                                Console.Write("\nShu EBU va fayl OILASI mos keladimi? Yozamizmi? (ha/yoq): ");
+                                return (Console.ReadLine() ?? "").Trim().ToLower() == "ha";
+                            });
+                            Console.WriteLine(ok ? "\n>>> YOZISH OK (verify o'tdi)." : "\n>>> YOZISH BEKOR/XATO — backupni tekshiring.");
+                        }
+                        else if (ch == "5")
+                        {
+                            if (!Require(connected)) continue;
+                            Console.Write("Yangi VIN (17 belgi): ");
+                            string vin = (Console.ReadLine() ?? "").Trim();
+                            if (vin.Length != 17) { Console.WriteLine("VIN 17 belgi bo'lishi shart."); continue; }
+                            Console.Write("Tasdiqlaysizmi? (ha/yoq): ");
+                            if ((Console.ReadLine() ?? "").Trim().ToLower() != "ha") { Console.WriteLine("Bekor."); continue; }
+                            Console.WriteLine(client.WriteVin(vin) ? ">>> VIN yozildi." : ">>> VIN yozilmadi.");
+                        }
+                        else if (ch == "6" || ch == "7")
+                        {
+                            Console.WriteLine("Bu funksiya hali tayyor emas — aniq komanda (log) kerak. Keyin to'ldiramiz.");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Noto'g'ri tanlov.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("\n[XATO] " + ex.Message);
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("\nXatolik: " + ex.Message);
             }
+            finally
+            {
+                client?.Dispose();
+            }
 
-            Console.WriteLine("\nTugadi.");
+            Console.WriteLine("\nDastur yakunlandi.");
+        }
+
+        static bool Require(bool connected)
+        {
+            if (!connected) Console.WriteLine("Avval 1-menyu orqali ULANING.");
+            return connected;
         }
     }
 }
