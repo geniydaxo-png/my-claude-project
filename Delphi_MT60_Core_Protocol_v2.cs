@@ -66,7 +66,7 @@ namespace DelphiMT60
             }
         }
 
-        public void Dispose() { _transport?.Dispose(); }   // TUZATILDI: DLL ham bo'shatiladi
+        public void Dispose() { if (_transport != null) _transport.Dispose(); }   // TUZATILDI: DLL ham bo'shatiladi
 
         // --- Kichik yordamchi: ijobiy javobni tekshirish (SID == so'rov+0x40) ---
         private static bool IsPositive(byte[] resp, byte requestSid)
@@ -326,7 +326,7 @@ namespace DelphiMT60
                 Buffer.BlockCopy(chunk, 2, buf, offset, copy);
                 offset += copy;
                 seq++;
-                progress?.Invoke(offset, total);
+                if (progress != null) progress(offset, total);
             }
 
             _transport.SendAndReceive(new byte[] { 0x37 });
@@ -471,7 +471,7 @@ namespace DelphiMT60
                 }
                 written += cur;
                 seq++;
-                progress?.Invoke(baseProg + written, FULL_FLASH_15MB);
+                if (progress != null) progress(baseProg + written, FULL_FLASH_15MB);
             }
 
             byte[] exit = _transport.SendAndReceive(new byte[] { 0x37 });
@@ -858,7 +858,7 @@ namespace DelphiMT60
             }
             finally
             {
-                client?.Dispose();
+                if (client != null) client.Dispose();
             }
 
             Console.WriteLine("\nDastur yakunlandi.");
