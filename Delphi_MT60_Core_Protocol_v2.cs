@@ -117,8 +117,13 @@ namespace DelphiMT60
         #region 2. Xavfsizlik (SecurityAccess 0x27) — algoritm v1 BILAN BIR XIL
 
         /// <summary>
-        /// DIQQAT: Bu algoritm asl kodingizdan O'ZGARTIRILMASDAN olingan.
-        /// To'g'riligi tasdiqlanmagan — shuning uchun urinishlar cheklangan (MAX_SECURITY_ATTEMPTS).
+        /// MANBA: MT60_Master.exe IL disassembly — DelphiMt60EepromClient.B(int seed)
+        ///        (Metadata Token 0x06000078). Delphi MT60 (GM Type 4) backdoor kaliti.
+        /// DIQQAT: Bu backdoor AYRIM zavod proshivkalarida (masalan PCE6STN#55) GM tomonidan
+        ///        YOPILGAN bo'lishi mumkin — unda Seed != 0 keladi va bu algoritm NOTO'G'RI
+        ///        kalit beradi (NRC 0x35), takror urinish NRC 0x37 bloklanishga olib keladi.
+        ///        Shuning uchun: Seed == 0 (ochiq) bo'lsa kalit umuman yuborilmaydi; Seed != 0
+        ///        bo'lsa faqat BIR marta, baland ogohlantirish bilan.
         /// </summary>
         public static ushort CalculateSecurityKey(ushort seed)
         {
@@ -500,8 +505,7 @@ namespace DelphiMT60
     {
         private readonly string _dllPath;
         private IntPtr _hDll = IntPtr.Zero;
-        private uint _deviceId, _channelId, _filterId;
-        private readonly Action<string> _logger;
+        private uint _deviceId, _channelId;
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtOpen(IntPtr pName, out uint pDeviceId);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtClose(uint deviceId);
@@ -510,19 +514,18 @@ namespace DelphiMT60
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtReadMsgs(uint channelId, IntPtr pMsg, out uint pNumMsgs, uint timeout);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtWriteMsgs(uint channelId, IntPtr pMsg, out uint pNumMsgs, uint timeout);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtStartMsgFilter(uint channelId, uint filterType, IntPtr pMask, IntPtr pPattern, IntPtr pFlow, out uint pFilterId);
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtStopMsgFilter(uint channelId, uint filterId);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int PtIoctl(uint handleId, uint ioctlId, IntPtr pInput, IntPtr pOutput);
 
         private PtOpen _ptOpen; private PtClose _ptClose; private PtConnect _ptConnect; private PtDisconnect _ptDisconnect;
         private PtReadMsgs _ptReadMsgs; private PtWriteMsgs _ptWriteMsgs; private PtStartMsgFilter _ptStartMsgFilter;
-        private PtStopMsgFilter _ptStopMsgFilter; private PtIoctl _ptIoctl;
+        private PtIoctl _ptIoctl;
 
         public const uint ISO15765 = 6, CAN = 5, FLOW_CONTROL_FILTER = 3, CLEAR_TX_BUFFER = 7, CLEAR_RX_BUFFER = 8;
         private const uint RXSTATUS_TX_MSG_TYPE = 0x00000001;  // TX loopback indikatori
 
         public J2534Transport(string dllPath, Action<string> logger = null)
         {
-            _dllPath = dllPath; _logger = logger ?? Console.WriteLine; LoadDll();
+            _dllPath = dllPath; LoadDll();
         }
 
         private void LoadDll()
@@ -536,7 +539,6 @@ namespace DelphiMT60
             _ptReadMsgs = GetFunc<PtReadMsgs>("PassThruReadMsgs");
             _ptWriteMsgs = GetFunc<PtWriteMsgs>("PassThruWriteMsgs");
             _ptStartMsgFilter = GetFunc<PtStartMsgFilter>("PassThruStartMsgFilter");
-            _ptStopMsgFilter = GetFunc<PtStopMsgFilter>("PassThruStopMsgFilter");
             _ptIoctl = GetFunc<PtIoctl>("PassThruIoctl");
         }
 
@@ -573,7 +575,8 @@ namespace DelphiMT60
                 Marshal.StructureToPtr(mask, pM, false);
                 Marshal.StructureToPtr(pattern, pP, false);
                 Marshal.StructureToPtr(flow, pF, false);
-                int s = _ptStartMsgFilter(_channelId, FLOW_CONTROL_FILTER, pM, pP, pF, out _filterId);
+                uint filterId;
+                int s = _ptStartMsgFilter(_channelId, FLOW_CONTROL_FILTER, pM, pP, pF, out filterId);
                 if (s != 0) throw new Exception("StartMsgFilter xato: " + s);
             }
             finally { Marshal.FreeHGlobal(pM); Marshal.FreeHGlobal(pP); Marshal.FreeHGlobal(pF); }
