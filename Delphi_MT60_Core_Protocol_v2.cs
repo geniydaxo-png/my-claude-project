@@ -32,6 +32,11 @@ namespace DelphiMT60
         // Noto'g'ri kalit bilan EBUni bloklamaslik uchun — urinishlar chegarasi.
         public const int MAX_SECURITY_ATTEMPTS = 2;
 
+        // SPS log ISBOTI: GM DPS ham Seed != 0 bo'lganda kalit (27 02) YUBORMAYDI.
+        // Algoritm tasdiqlanmagan. Default: noldan farqli seedda kalit yuborilmaydi (bloklanish xavfi = 0).
+        // Faqat aniq zarur bo'lsa va xavfni tushunib true qiling.
+        public bool SendKeyOnNonZeroSeed = false;
+
         private readonly J2534Transport _transport;
         private readonly Action<string> _logger;
         private int _securityAttempts = 0;
@@ -181,7 +186,15 @@ namespace DelphiMT60
             }
 
             ushort key = CalculateSecurityKey(seed);
-            _logger(string.Format("[SECURITY] Seed: 0x{0:X4} -> Key: 0x{1:X4}", seed, key));
+            _logger(string.Format("[SECURITY] Seed: 0x{0:X4} -> Key: 0x{1:X4} (hisoblangan)", seed, key));
+
+            // SPS log isboti: GM DPS bunday holatda kalit yubormaydi. Default — biz ham yubormaymiz.
+            if (!SendKeyOnNonZeroSeed)
+            {
+                _logger("[SECURITY] Seed != 0 — EBU yopiq. GM DPS ham kalit yubormaydi, algoritm tasdiqlanmagan.");
+                _logger("[SECURITY] Kalit YUBORILMADI (bloklanish xavfi yo'q). Kerak bo'lsa SendKeyOnNonZeroSeed=true.");
+                return false;
+            }
 
             byte keySub = (byte)(accessLevel + 1);
             byte[] keyResp = _transport.SendAndReceive(new byte[] {
