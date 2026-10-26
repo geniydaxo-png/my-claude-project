@@ -305,29 +305,29 @@ namespace DelphiMT60
 
         public bool UploadRamBootloader(byte[] boot)
         {
-            byte nrc0;
+            // MUHIM (MT60_Master.exe isboti): $34 va prep javoblari TEKSHIRILMAYDI.
+            // EBU NRC 0x22 bersa ham, TC1766 baribir 0x7D0 orqali bootloader freymlarini
+            // qabul qilish rejimiga o'tadi. Shuning uchun NRC'da TO'XTAMAYMIZ.
+            byte nrc;
+
             _logger("[BOOT] 1-bosqich: $10 02 (Programming session)...");
-            byte[] r1 = _transport.SendAndReceive(new byte[] { 0x10, 0x02 });
-            if (IsNegative(r1, out nrc0)) { _logger(string.Format("[BOOT] $10 02 rad etildi (NRC 0x{0:X2}).", nrc0)); return false; }
+            _transport.SendAndReceive(new byte[] { 0x10, 0x02 });
             Thread.Sleep(40);
 
-            // $10 85 OLIB TASHLANDI: haqiqiy MT60_Master.exe uni YUBORMAYDI (butun binarda yo'q).
-            // U NRC 0x22 (ConditionsNotCorrect) ga sabab bo'lgan bo'lishi mumkin.
+            _logger("[BOOT] 2-bosqich: Security Access...");
+            UnlockSecurityAccess(0x01);   // seed 0 bo'lsa ochiq; xato bo'lsa ham davom
 
-            _logger("[BOOT] 2-bosqich: Security Access (kalit yuboriladi)...");
-            if (!UnlockSecurityAccess(0x01)) { _logger("[BOOT] Xavfsizlik ochilmadi."); return false; }
-
-            _logger("[BOOT] 4-bosqich: $34 RequestDownload...");
-            byte nrc;
+            _logger("[BOOT] 3-bosqich: $34 RequestDownload (javob e'tiborsiz)...");
             byte[] r34 = _transport.SendAndReceive(new byte[] { 0x34, 0x00, 0x00, 0x00, 0x00, 0x00 });
-            if (IsNegative(r34, out nrc)) { _logger(string.Format("[BOOT] $34 rad etildi (NRC 0x{0:X2}).", nrc)); return false; }
+            if (IsNegative(r34, out nrc)) _logger(string.Format("[BOOT] $34 -> NRC 0x{0:X2} (kutilgan, davom etamiz).", nrc));
             Thread.Sleep(25);
 
+            _logger("[BOOT] 4-bosqich: prep freym (javob e'tiborsiz)...");
             byte[] prep = new byte[] { 0x36, 0x80, 0xD0, 0x00, 0x68, 0x00, 0xC5, 0x8F, 0x80, 0x80, 0x2D, 0x0F, 0x00, 0x00 };
             _transport.SendAndReceive(prep);
             Thread.Sleep(25);
 
-            _logger(string.Format("[BOOT] 5-bosqich: 499 freym 0x7D0 orqali ({0} bayt)...", boot.Length));
+            _logger(string.Format("[BOOT] 5-bosqich: {0} freym 0x7D0 orqali ({1} bayt)...", boot.Length / 8, boot.Length));
             int frames = boot.Length / 8;
             for (int i = 0; i < frames; i++)
             {
@@ -336,8 +336,8 @@ namespace DelphiMT60
                 _transport.SendRawCan(BOOT_TX_ID, f);
                 if (i % 64 == 0) Thread.Sleep(1);
             }
-            Thread.Sleep(50);
-            _logger("[BOOT] Bootloader yuborildi.");
+            Thread.Sleep(100);
+            _logger("[BOOT] Bootloader RAMga yuklandi.");
             return true;
         }
 
@@ -345,61 +345,65 @@ namespace DelphiMT60
 
         #region 4. Full Flash O'qish
 
+        // O'QISH: UDS $23 (ReadMemoryByAddress) — MT60_Master.exe isboti (metod 0xc5).
+        // Freym: 23 A0 [addr3] [size2]  ->  javob: 63 [addr3] [data...]
         public byte[] ReadFullFlash(Action<int, int> progress = null, bool uploadBoot = true)
         {
-            _logger("[FLASH] 1.5 MB o'qish boshlandi...");
+            _logger("[FLASH] 1.5 MB o'qish boshlandi ($23 ReadMemoryByAddress)...");
 
             if (uploadBoot)
             {
                 byte[] boot = LoadBootloaderOrThrow();
-                if (!UploadRamBootloader(boot)) throw new Exception("RAM Bootloader yuklanmadi!");
+                UploadRamBootloader(boot);   // $34 NRC bo'lsa ham davom etadi
             }
 
             int total = FULL_FLASH_15MB;
             byte[] buf = new byte[total];
-
-            _logger("[FLASH] $35 RequestUpload...");
-            byte[] ru = _transport.SendAndReceive(new byte[] {
-                0x35, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x17, 0x80, 0x00
-            });
-            if (!IsPositive(ru, 0x35))
-            {
-                byte nrc; IsNegative(ru, out nrc);
-                throw new Exception(string.Format("RequestUpload rad etildi (NRC 0x{0:X2})!", nrc));
-            }
-
+            int blockSize = 4080;            // 0x0FF0
             int offset = 0;
-            byte seq = 1;
             int emptyGuard = 0;
-            _logger("[FLASH] 4080-baytli bloklar o'qilmoqda...");
+
+            _logger("[FLASH] 4080-baytli bloklar $23 A0 bilan o'qilmoqda...");
             while (offset < total)
             {
-                byte[] chunk = _transport.SendAndReceive(new byte[] { 0x36, seq });
-                if (!IsPositive(chunk, 0x36) || chunk.Length < 2)
-                    throw new Exception(string.Format("Offset 0x{0:X} da o'qish xatosi!", offset));
+                int cur = Math.Min(blockSize, total - offset);
+                byte[] req = new byte[] {
+                    0x23, 0xA0,
+                    (byte)((offset >> 16) & 0xFF),
+                    (byte)((offset >> 8) & 0xFF),
+                    (byte)(offset & 0xFF),
+                    (byte)((cur >> 8) & 0xFF),
+                    (byte)(cur & 0xFF)
+                };
+                byte[] resp = _transport.SendAndReceive(req, 3000);
 
-                // TUZATILDI: seq echo tekshiriladi
-                if (chunk[1] != seq)
-                    throw new Exception(string.Format("Seq xato: kutildi {0}, keldi {1} (0x{2:X}).", seq, chunk[1], offset));
+                byte nrc;
+                if (IsNegative(resp, out nrc))
+                    throw new Exception(string.Format("O'qish rad etildi 0x{0:X} (NRC 0x{1:X2})!", offset, nrc));
 
-                int payload = chunk.Length - 2;
-                // TUZATILDI: cheksiz sikl himoyasi
-                if (payload <= 0)
+                if (resp == null || resp.Length < 5 || resp[0] != 0x63)
                 {
-                    if (++emptyGuard > 3) throw new Exception("Bo'sh bloklar keldi — o'qish to'xtatildi.");
+                    if (++emptyGuard > 3) throw new Exception(string.Format("O'qish javobi yo'q/noto'g'ri 0x{0:X}.", offset));
                     continue;
                 }
                 emptyGuard = 0;
 
-                int copy = Math.Min(payload, total - offset);
-                Buffer.BlockCopy(chunk, 2, buf, offset, copy);
+                // 63 [addr_hi addr_mid addr_lo] [data...]  -> data 4-indeksdan
+                int dataStart = 4;
+                int avail = resp.Length - dataStart;
+                int copy = Math.Min(avail, cur);
+                if (copy <= 0)
+                {
+                    if (++emptyGuard > 3) throw new Exception(string.Format("Bo'sh javob 0x{0:X}.", offset));
+                    continue;
+                }
+                Buffer.BlockCopy(resp, dataStart, buf, offset, copy);
                 offset += copy;
-                seq++;
                 if (progress != null) progress(offset, total);
             }
 
-            _transport.SendAndReceive(new byte[] { 0x37 });
-            _logger("[FLASH] O'qish tugadi (" + offset + " bayt).");
+            _logger("[FLASH] O'qish tugadi (" + offset + " bayt). EBU reset ($11 01)...");
+            _transport.SendAndReceive(new byte[] { 0x11, 0x01 });
             return buf;
         }
 
