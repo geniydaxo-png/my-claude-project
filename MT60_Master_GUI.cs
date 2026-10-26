@@ -31,7 +31,8 @@ namespace DelphiMT60
         private volatile bool _busy;
 
         private TextBox _txtLog;
-        private ComboBox _cmbDev;
+        private Label _lblAdapter;
+        private J2534Device _selected;   // null = Avto (hammasini sinash)
         private List<J2534Device> _devices = new List<J2534Device>();
         private string _manualDll;
         private readonly string _cfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mt60_adapter.cfg");
@@ -94,32 +95,20 @@ namespace DelphiMT60
             left.Dock = DockStyle.Left; left.Width = 268; left.BackColor = BG; left.Padding = new Padding(16, 12, 12, 12);
 
             Label dllLbl = new Label();
-            dllLbl.Text = "J2534 adapter (avtomatik):"; dllLbl.ForeColor = MUTED; dllLbl.AutoSize = true;
+            dllLbl.Text = "Adapter:"; dllLbl.ForeColor = MUTED; dllLbl.AutoSize = true;
             dllLbl.Location = new Point(16, 8);
-            _cmbDev = new ComboBox();
-            _cmbDev.DropDownStyle = ComboBoxStyle.DropDownList;
-            _cmbDev.Location = new Point(16, 28); _cmbDev.Size = new Size(236, 24);
-            _cmbDev.BackColor = LOGBG; _cmbDev.ForeColor = TXT; _cmbDev.FlatStyle = FlatStyle.Flat;
-            Button btnRefresh = new Button();
-            btnRefresh.Text = "↻ Yangilash"; StyleBtn(btnRefresh, GRAY);
-            btnRefresh.Location = new Point(16, 56); btnRefresh.Size = new Size(140, 28);
-            btnRefresh.Click += delegate { RefreshDevices(); };
-            Button btnBrowse = new Button();
-            btnBrowse.Text = "DLL..."; StyleBtn(btnBrowse, GRAY);
-            btnBrowse.Location = new Point(160, 56); btnBrowse.Size = new Size(92, 28);
-            btnBrowse.Click += delegate {
-                OpenFileDialog d = new OpenFileDialog(); d.Filter = "J2534 DLL|*.dll|Barcha|*.*";
-                if (d.ShowDialog() == DialogResult.OK) {
-                    _manualDll = d.FileName;
-                    J2534Device md = new J2534Device(); md.Name = "Qo'lda: " + Path.GetFileName(d.FileName); md.DllPath = d.FileName;
-                    _cmbDev.Items.Add(md); _cmbDev.SelectedItem = md;
-                    Log("Qo'lda DLL tanlandi: " + d.FileName);
-                }
-            };
-            left.Controls.Add(dllLbl); left.Controls.Add(_cmbDev); left.Controls.Add(btnRefresh); left.Controls.Add(btnBrowse);
+            _lblAdapter = new Label();
+            _lblAdapter.Text = "aniqlanmoqda...";
+            _lblAdapter.ForeColor = TXT; _lblAdapter.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            _lblAdapter.Location = new Point(70, 8); _lblAdapter.Size = new Size(182, 20); _lblAdapter.AutoEllipsis = true;
+            Button btnChange = new Button();
+            btnChange.Text = "Adapterni almashtirish"; StyleBtn(btnChange, GRAY);
+            btnChange.Location = new Point(16, 32); btnChange.Size = new Size(236, 26);
+            btnChange.Click += delegate { ShowAdapterMenu(btnChange); };
+            left.Controls.Add(dllLbl); left.Controls.Add(_lblAdapter); left.Controls.Add(btnChange);
 
             _btns = new FlowLayoutPanel();
-            _btns.Location = new Point(16, 94); _btns.Size = new Size(240, 420);
+            _btns.Location = new Point(16, 70); _btns.Size = new Size(240, 444);
             _btns.FlowDirection = FlowDirection.TopDown; _btns.WrapContents = false;
             _btns.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
 
@@ -221,38 +210,88 @@ namespace DelphiMT60
         private void RefreshDevices()
         {
             _devices = J2534Registry.List();
-            _cmbDev.Items.Clear();
-            // Birinchi: AVTO — ulangan adapterni o'zi topadi
-            J2534Device auto = new J2534Device(); auto.Name = "Avto — ulangan adapterni top"; auto.DllPath = null;
-            _cmbDev.Items.Add(auto);
-            foreach (J2534Device d in _devices) _cmbDev.Items.Add(d);
 
-            // Standart tanlov: 1) oxirgi ishlatilgan  2) Scanmatik SM2  3) Avto
-            int def = 0; // Avto
+            // Standart tanlov: 1) oxirgi ishlatilgan  2) Scanmatik SM2  3) birinchisi
+            J2534Device pick = null;
             string saved = LoadSavedDll();
             if (!string.IsNullOrEmpty(saved))
-                for (int i = 0; i < _devices.Count; i++)
-                    if (string.Equals(_devices[i].DllPath, saved, StringComparison.OrdinalIgnoreCase)) { def = i + 1; break; }
-            if (def == 0)
-                for (int i = 0; i < _devices.Count; i++)
-                {
-                    string low = _devices[i].DllPath.ToLower();
-                    if (low.EndsWith("smj2534.dll")) { def = i + 1; break; }        // Scanmatik SM2
-                }
-            _cmbDev.SelectedIndex = Math.Min(def, _cmbDev.Items.Count - 1);
+                foreach (J2534Device d in _devices)
+                    if (string.Equals(d.DllPath, saved, StringComparison.OrdinalIgnoreCase)) { pick = d; break; }
+            if (pick == null)
+                foreach (J2534Device d in _devices)
+                    if (d.DllPath.ToLower().EndsWith("smj2534.dll")) { pick = d; break; }  // Scanmatik SM2
+            if (pick == null && _devices.Count > 0) pick = _devices[0];
+
+            SetAdapter(pick);
 
             if (_devices.Count > 0)
             {
                 Log("Topilgan J2534 adapter(lar): " + _devices.Count);
                 foreach (J2534Device d in _devices) Log("   • " + d + "   [" + d.DllPath + "]");
-                J2534Device cur = _cmbDev.SelectedItem as J2534Device;
-                if (cur != null && !string.IsNullOrEmpty(cur.DllPath)) Log("Tanlandi: " + cur.Name + " (kerak bo'lsa ro'yxatdan o'zgartiring).");
-                else Log("DIQQAT: 'Avto' 16 ta adapterni sinaydi va ba'zi drayverlar oynasi ochilishi mumkin. Yaxshisi ro'yxatdan Scanmatik'ni tanlang.");
+                if (pick != null) Log("Tanlandi: " + pick.Name + "  — endi ULANISH bosing.");
             }
             else
             {
-                Log("J2534 adapter registrda topilmadi. Drayver o'rnatilganmi? 'DLL...' orqali qo'lda ko'rsating.");
+                Log("J2534 adapter registrda topilmadi. 'Adapterni almashtirish' -> DLL... orqali ko'rsating.");
             }
+        }
+
+        private void SetAdapter(J2534Device d)
+        {
+            if (InvokeRequired) { BeginInvoke(new Action<J2534Device>(SetAdapter), d); return; }
+            _selected = d;
+            _lblAdapter.Text = (d != null && !string.IsNullOrEmpty(d.DllPath)) ? d.Name : "Avto (ulanganini top)";
+        }
+
+        // Sinash tartibi: oxirgi ishlatilgan -> Scanmatik -> qolganlar
+        private List<J2534Device> OrderedCandidates()
+        {
+            List<J2534Device> cand = new List<J2534Device>();
+            if (!string.IsNullOrEmpty(_manualDll) && File.Exists(_manualDll))
+            {
+                J2534Device md = new J2534Device(); md.Name = "Qo'lda DLL"; md.DllPath = _manualDll; cand.Add(md);
+            }
+            string saved = LoadSavedDll();
+            foreach (J2534Device d in _devices)
+                if (!string.IsNullOrEmpty(saved) && string.Equals(d.DllPath, saved, StringComparison.OrdinalIgnoreCase)) cand.Add(d);
+            foreach (J2534Device d in _devices)
+                if (d.DllPath.ToLower().EndsWith("smj2534.dll") && !cand.Contains(d)) cand.Add(d);
+            foreach (J2534Device d in _devices)
+                if (!cand.Contains(d)) cand.Add(d);
+            return cand;
+        }
+
+        private void ShowAdapterMenu(Control anchor)
+        {
+            ContextMenuStrip m = new ContextMenuStrip();
+            ToolStripMenuItem auto = new ToolStripMenuItem("Avto (ulanganini top)");
+            auto.Click += delegate { SetAdapter(null); Log("Rejim: Avto."); };
+            m.Items.Add(auto);
+            m.Items.Add(new ToolStripSeparator());
+            foreach (J2534Device d in _devices)
+            {
+                J2534Device dd = d;
+                ToolStripMenuItem it = new ToolStripMenuItem(d.ToString());
+                it.Click += delegate { SetAdapter(dd); Log("Adapter tanlandi: " + dd.Name); };
+                m.Items.Add(it);
+            }
+            m.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem refr = new ToolStripMenuItem("↻ Yangilash (qayta skaner)");
+            refr.Click += delegate { RefreshDevices(); };
+            m.Items.Add(refr);
+            ToolStripMenuItem dll = new ToolStripMenuItem("DLL... (qo'lda ko'rsatish)");
+            dll.Click += delegate
+            {
+                OpenFileDialog d = new OpenFileDialog(); d.Filter = "J2534 DLL|*.dll|Barcha|*.*";
+                if (d.ShowDialog() == DialogResult.OK)
+                {
+                    _manualDll = d.FileName;
+                    J2534Device md = new J2534Device(); md.Name = "Qo'lda: " + Path.GetFileName(d.FileName); md.DllPath = d.FileName;
+                    SetAdapter(md); Log("Qo'lda DLL: " + d.FileName);
+                }
+            };
+            m.Items.Add(dll);
+            m.Show(anchor, new Point(0, anchor.Height));
         }
 
         private string LoadSavedDll()
@@ -301,32 +340,25 @@ namespace DelphiMT60
         {
             RunBg("Ulanmoqda", delegate ()
             {
-                J2534Device sel = _cmbDev.SelectedItem as J2534Device;
+                J2534Device sel = _selected;
                 bool auto = (sel == null || string.IsNullOrEmpty(sel.DllPath));
 
-                if (auto)
+                if (!auto)
                 {
-                    // Qo'lda DLL berilgan bo'lsa, uni ro'yxat boshiga qo'shamiz
-                    List<J2534Device> cand = new List<J2534Device>();
-                    if (!string.IsNullOrEmpty(_manualDll) && File.Exists(_manualDll))
-                    {
-                        J2534Device md = new J2534Device(); md.Name = "Qo'lda DLL"; md.DllPath = _manualDll; cand.Add(md);
-                    }
-                    cand.AddRange(_devices);
-                    if (cand.Count == 0) throw new Exception("Adapter topilmadi. 'Yangilash' bosing yoki 'DLL...' bilan ko'rsating.");
-
-                    Log("Avto: ulangan adapter qidirilmoqda (" + cand.Count + " ta)...");
-                    foreach (J2534Device d in cand)
-                        if (TryOpen(d)) { SetConnected(true); Log("[OK] Ulandi: " + d.Name); return; }
-
-                    throw new Exception("Hech bir adapter ulanmadi. Scanmatik USB va mashinaga ulanganmi? Boshqa dastur adapterni band qilmaganmi?");
-                }
-                else
-                {
+                    // Aniq adapter tanlangan — faqat shuni sinaymiz (boshqa drayver oynalari ochilmaydi)
                     if (!File.Exists(sel.DllPath)) throw new Exception("DLL topilmadi: " + sel.DllPath);
-                    if (!TryOpen(sel)) throw new Exception("Ulanmadi: " + sel.Name + " — ulangan va bo'shligini tekshiring.");
-                    SetConnected(true); Log("[OK] Ulandi: " + sel.Name);
+                    if (TryOpen(sel)) { SetConnected(true); Log("[OK] Ulandi: " + sel.Name); return; }
+                    throw new Exception("Ulanmadi: " + sel.Name +
+                        ". Tekshiring: adapter USB'ga va mashina OBD'ga ulanganmi? Kontakt yoqilganmi? Boshqa dastur (ChipTuningPRO/ECU Flash) adapterni band qilmaganmi?");
                 }
+
+                // Avto — tartib bilan sinaymiz (Scanmatik birinchi)
+                List<J2534Device> cand = OrderedCandidates();
+                if (cand.Count == 0) throw new Exception("Adapter topilmadi. 'Adapterni almashtirish' -> DLL... bilan ko'rsating.");
+                Log("Avto: ulangan adapter qidirilmoqda (" + cand.Count + " ta)...");
+                foreach (J2534Device d in cand)
+                    if (TryOpen(d)) { SetAdapter(d); SetConnected(true); Log("[OK] Ulandi: " + d.Name); return; }
+                throw new Exception("Hech bir adapter ulanmadi. Adapter va mashina ulanganmi? Kontakt yoqilganmi?");
             });
         }
 

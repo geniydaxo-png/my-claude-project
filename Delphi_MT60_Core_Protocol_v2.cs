@@ -603,7 +603,7 @@ namespace DelphiMT60
 
         public void Connect(uint baud)
         {
-            int s = _ptConnect(_deviceId, ISO15765, 0x00000040, baud, out _channelId);
+            int s = _ptConnect(_deviceId, ISO15765, 0, baud, out _channelId);
             if (s != 0) throw new Exception("PassThruConnect xato: " + s);
             SetupIsoTpFilter(DelphiMt60Client.ECU_RX_ID, DelphiMt60Client.ECU_TX_ID);
         }
