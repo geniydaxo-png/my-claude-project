@@ -283,22 +283,36 @@ namespace DelphiMT60
 
         #region 3. RAM Bootloader (CAN 0x7D0) — oqim v1 bilan bir xil
 
+        // GM GMLAN Programming Mode sekvensiyasi (SPS log'dan). Shundan keyin seed = 0x0000 bo'ladi.
+        // EKSPERIMENTAL: funksional freymlar (CAN 0x101) Scanmatik drayveriga bog'liq.
+        public void EnterProgrammingMode()
+        {
+            _logger("[PROG] GM Programming Mode (A5) boshlanmoqda...");
+            // 1) disableAllDTCs
+            _transport.SendFunctional(new byte[] { 0x10, 0x02 });
+            Thread.Sleep(100);
+            // 2) DisableNormalCommunication
+            _transport.SendFunctional(new byte[] { 0x28 });
+            Thread.Sleep(100);
+            // 3) requestProgrammingMode (A5 01)
+            _transport.SendFunctional(new byte[] { 0xA5, 0x01 });
+            Thread.Sleep(1500);
+            // 4) enableProgrammingMode (A5 03) — EBU reset bo'ladi, javob yo'q
+            _transport.SendFunctional(new byte[] { 0xA5, 0x03 });
+            _logger("[PROG] A5 03 yuborildi — EBU boot rejimiga o'tmoqda (reset, ~2s)...");
+            Thread.Sleep(2000);
+        }
+
         public bool UploadRamBootloader(byte[] boot)
         {
-            _logger("[BOOT] 1-bosqich: $10 02 (Programming session)...");
-            byte[] r1 = _transport.SendAndReceive(new byte[] { 0x10, 0x02 });
-            byte nrc;
-            if (IsNegative(r1, out nrc)) { _logger(string.Format("[BOOT] $10 02 rad etildi (NRC 0x{0:X2}).", nrc)); return false; }
-            Thread.Sleep(40);
-
-            _logger("[BOOT] 2-bosqich: $10 85 (High-speed)...");
-            _transport.SendAndReceive(new byte[] { 0x10, 0x85 });
-            Thread.Sleep(40);
+            // GM Programming Mode: shundan keyin seed 0x0000 (ochiq) bo'lishi kerak
+            EnterProgrammingMode();
 
             _logger("[BOOT] 3-bosqich: Security Access...");
             if (!UnlockSecurityAccess(0x01)) { _logger("[BOOT] Xavfsizlik ochilmadi."); return false; }
 
             _logger("[BOOT] 4-bosqich: $34 RequestDownload...");
+            byte nrc;
             byte[] r34 = _transport.SendAndReceive(new byte[] { 0x34, 0x00, 0x00, 0x00, 0x00, 0x00 });
             if (IsNegative(r34, out nrc)) { _logger(string.Format("[BOOT] $34 rad etildi (NRC 0x{0:X2}).", nrc)); return false; }
             Thread.Sleep(25);
@@ -752,6 +766,16 @@ namespace DelphiMT60
                 _ptWriteMsgs(_channelId, pMsg, out n, 500);
             }
             finally { Marshal.FreeHGlobal(pMsg); }
+        }
+
+        // GMLAN funksional so'rov: CAN 0x101, bayt tartibi [FE, len, data...] (SPS log formati).
+        public void SendFunctional(byte[] gmlan)
+        {
+            byte[] frame = new byte[8];
+            frame[0] = 0xFE;
+            frame[1] = (byte)gmlan.Length;
+            Buffer.BlockCopy(gmlan, 0, frame, 2, Math.Min(gmlan.Length, 6));
+            SendRawCan(0x101, frame);
         }
 
         public void ClearBuffers()
