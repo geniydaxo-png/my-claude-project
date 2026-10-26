@@ -114,3 +114,50 @@ Avtomobil: VIN **KL1JD5CE3JB036436**, Part ID **PCH9STN#53**, EBU 0x11, HS-CAN, 
 
 ### VIN yozish — kodingiz TO'G'RI
 Logda VIN `3B 90 4B 4C 31 ...` bilan yozilgan (GMLAN WriteDataByIdentifier). Kodingizdagi `WriteVin` ($3B $90) formati haqiqatga MOS. Shuningdek `3B 98` (SW), `3B 99` (sana) ham shu usulda.
+
+---
+
+## 7. DASTUR ISHLAB CHIQISH JURNALI (GUI v2)
+
+### ✅ YUTUQLAR (ishlaydi)
+
+| # | Narsa | Holat |
+|---|---|---|
+| 1 | Eski .NET 4.0 csc mosligi | `?.` olib tashlandi (C# 4/5) — yig'iladi |
+| 2 | Chiroyli GUI (WinForms, qorong'i mavzu) | Tugmalar, log, progress, holat |
+| 3 | J2534 adapterni avtomatik topish | Registry (PassThruSupport.04.04, 32/64 bit) |
+| 4 | Scanmatik SM2 avto-tanlov + eslab qolish | mt60_adapter.cfg |
+| 5 | **ULANISH ishladi** | SM2 USB, 500 kbps ISO15765 |
+| 6 | **Ident/VIN o'qish ishladi** | VIN: XWB5V31BVHA531869 |
+| 7 | Chiroyli PASPORT jadval oynasi | Scanmatik uslubida, Saqlash(.txt) |
+
+### 🔴 TUZATILGAN XATOLAR
+
+| Xato | Sabab | Yechim |
+|---|---|---|
+| `xato 8` (ulanmadi) | Avval Autel/MDI tanlanardi; MDI oynasi ochilib qolardi | Scanmatik avto-tanlov, Avto tartibli |
+| `PassThruConnect xato 6` (ERR_INVALID_FLAGS) | ConnectFlags `0x40` berilgan — bu TxFlag (FRAME_PAD), ConnectFlag EMAS | ConnectFlags = 0 (11-bit CAN) |
+| Ident Scanmatikdan farq qilardi | Noto'g'ri DID/format | CB/CC/C1/C2 GM qism raqamlari (decimal). C1=25192910 tasdiqlangan |
+
+### 🟠 HALI OCHIQ (keyingi ish)
+
+| Muammo | Tafsilot |
+|---|---|
+| **FULL FLASH O'QISH ishlamaydi** | App-rejimda seed=0x60B5 (qulf). GM $A5 Programming Mode qo'shildi (seed 0 bo'lishi uchun), LEKIN eksperimental |
+| Funksional freym (CAN 0x101) noaniq | `FE 02 A5 01` formatini Scanmatik qanday qabul qilishi sinalmagan |
+| Boot rejim usuli mos kelmasligi mumkin | GM boot $34/$36 kutadi; bizdagi bootloader 0x7D0+$35 — boshqacha |
+| EEPROM o'qish/yozish | Komanda yo'q — log kerak |
+| Zaslonka reset | Komanda yo'q — log kerak |
+| Probeg o'qish | Offset noma'lum |
+| Immo-off | Combiloader patchini qo'llash (umumiy patcher) — rejada |
+
+### ⚠️ ENG MUHIM KEYINGI QADAM
+SPS log — bu **YOZISH** log'i, unда **O'QISH** ketma-ketligi yo'q.
+O'qishni 100% aniq va xavfsiz qilish uchun: **Scanmatik yoki ChipTuningPRO
+bilan shu EBU O'QILAYOTGANDA olingan CAN log** kerak.
+
+### Seed kuzatuvi (muhim)
+- SPS log (dasturlash): $A5 03 dan keyin seed = **0x0000** (ochiq).
+- Bizning bench (app rejim): seed = **0x60B5** (qulf) — chunki $A5 yo'q edi.
+- Seed-key algoritmi hali ham FAQAT 8 xil kalit beradi — tasdiqlanmagan,
+  shuning uchun noldan farqli seedda kalit yuborilmaydi (xavfsizlik).
