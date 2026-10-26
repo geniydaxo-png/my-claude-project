@@ -311,11 +311,10 @@ namespace DelphiMT60
             if (IsNegative(r1, out nrc0)) { _logger(string.Format("[BOOT] $10 02 rad etildi (NRC 0x{0:X2}).", nrc0)); return false; }
             Thread.Sleep(40);
 
-            _logger("[BOOT] 2-bosqich: $10 85 (High-speed)...");
-            _transport.SendAndReceive(new byte[] { 0x10, 0x85 });
-            Thread.Sleep(40);
+            // $10 85 OLIB TASHLANDI: haqiqiy MT60_Master.exe uni YUBORMAYDI (butun binarda yo'q).
+            // U NRC 0x22 (ConditionsNotCorrect) ga sabab bo'lgan bo'lishi mumkin.
 
-            _logger("[BOOT] 3-bosqich: Security Access (kalit yuboriladi)...");
+            _logger("[BOOT] 2-bosqich: Security Access (kalit yuboriladi)...");
             if (!UnlockSecurityAccess(0x01)) { _logger("[BOOT] Xavfsizlik ochilmadi."); return false; }
 
             _logger("[BOOT] 4-bosqich: $34 RequestDownload...");
