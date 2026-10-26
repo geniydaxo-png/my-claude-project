@@ -34,7 +34,6 @@ namespace DelphiMT60
         private ComboBox _cmbDev;
         private List<J2534Device> _devices = new List<J2534Device>();
         private string _manualDll;
-        private string _loadedDll;
         private ProgressBar _bar;
         private Label _lblStatus;
         private Label _lblConn;
@@ -222,11 +221,14 @@ namespace DelphiMT60
         {
             _devices = J2534Registry.List();
             _cmbDev.Items.Clear();
+            // Birinchi: AVTO — ulangan adapterni o'zi topadi
+            J2534Device auto = new J2534Device(); auto.Name = "Avto — ulangan adapterni top"; auto.DllPath = null;
+            _cmbDev.Items.Add(auto);
             foreach (J2534Device d in _devices) _cmbDev.Items.Add(d);
-            if (_cmbDev.Items.Count > 0)
+            _cmbDev.SelectedIndex = 0; // Avto default
+            if (_devices.Count > 0)
             {
-                _cmbDev.SelectedIndex = 0;
-                Log("Topilgan J2534 adapter(lar): " + _devices.Count);
+                Log("Topilgan J2534 adapter(lar): " + _devices.Count + "  (ULANISH -> Avto o'zi ulanganini tanlaydi)");
                 foreach (J2534Device d in _devices) Log("   • " + d + "   [" + d.DllPath + "]");
             }
             else
@@ -235,24 +237,30 @@ namespace DelphiMT60
             }
         }
 
-        private string SelectedDll()
+        private void SwapClient(DelphiMt60Client c)
         {
-            J2534Device d = _cmbDev.SelectedItem as J2534Device;
-            if (d != null) return d.DllPath;
-            return _manualDll;
+            if (_client != null) { try { _client.Dispose(); } catch { } }
+            _client = c;
         }
 
-        private void EnsureClient()
+        // Bitta adapterni sinab ko'radi: ochib, ulanib ko'radi. Muvaffaqiyatli bo'lsa true.
+        private bool TryOpen(J2534Device d)
         {
-            string dll = SelectedDll();
-            if (string.IsNullOrEmpty(dll) || !File.Exists(dll))
-                throw new Exception("J2534 adapter tanlanmagan/topilmagan. 'Yangilash' bosing yoki adapterni ulang.");
-
-            // Tanlangan adapter o'zgarsa — mijozni qayta yaratamiz
-            if (_client != null && _loadedDll == dll) return;
-            if (_client != null) { try { _client.Dispose(); } catch { } _client = null; }
-            _client = new DelphiMt60Client(dll, Log);
-            _loadedDll = dll;
+            Log("   sinalmoqda: " + d.Name + " ...");
+            DelphiMt60Client c = null;
+            try
+            {
+                c = new DelphiMt60Client(d.DllPath, Log);
+                c.Connect();
+                SwapClient(c);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (c != null) { try { c.Dispose(); } catch { } }
+                Log("      -> ulanmadi (" + ex.Message + ")");
+                return false;
+            }
         }
 
         private void NeedConn() { if (!_connected) throw new Exception("Avval ULANING (1-tugma)."); }
@@ -263,10 +271,32 @@ namespace DelphiMT60
         {
             RunBg("Ulanmoqda", delegate ()
             {
-                EnsureClient();
-                _client.Connect();
-                SetConnected(true);
-                Log("[OK] Ulanish muvaffaqiyatli.");
+                J2534Device sel = _cmbDev.SelectedItem as J2534Device;
+                bool auto = (sel == null || string.IsNullOrEmpty(sel.DllPath));
+
+                if (auto)
+                {
+                    // Qo'lda DLL berilgan bo'lsa, uni ro'yxat boshiga qo'shamiz
+                    List<J2534Device> cand = new List<J2534Device>();
+                    if (!string.IsNullOrEmpty(_manualDll) && File.Exists(_manualDll))
+                    {
+                        J2534Device md = new J2534Device(); md.Name = "Qo'lda DLL"; md.DllPath = _manualDll; cand.Add(md);
+                    }
+                    cand.AddRange(_devices);
+                    if (cand.Count == 0) throw new Exception("Adapter topilmadi. 'Yangilash' bosing yoki 'DLL...' bilan ko'rsating.");
+
+                    Log("Avto: ulangan adapter qidirilmoqda (" + cand.Count + " ta)...");
+                    foreach (J2534Device d in cand)
+                        if (TryOpen(d)) { SetConnected(true); Log("[OK] Ulandi: " + d.Name); return; }
+
+                    throw new Exception("Hech bir adapter ulanmadi. Scanmatik USB va mashinaga ulanganmi? Boshqa dastur adapterni band qilmaganmi?");
+                }
+                else
+                {
+                    if (!File.Exists(sel.DllPath)) throw new Exception("DLL topilmadi: " + sel.DllPath);
+                    if (!TryOpen(sel)) throw new Exception("Ulanmadi: " + sel.Name + " — ulangan va bo'shligini tekshiring.");
+                    SetConnected(true); Log("[OK] Ulandi: " + sel.Name);
+                }
             });
         }
 
