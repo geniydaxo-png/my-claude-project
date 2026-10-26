@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32;
 
 namespace DelphiMT60
 {
@@ -578,7 +579,26 @@ namespace DelphiMT60
         public void Open()
         {
             int s = _ptOpen(IntPtr.Zero, out _deviceId);
-            if (s != 0) throw new Exception("PassThruOpen xato: " + s);
+            if (s != 0) throw new Exception("PassThruOpen xato: " + s + " — " + J2534ErrText(s));
+        }
+
+        public static string J2534ErrText(int code)
+        {
+            switch (code)
+            {
+                case 0x07: return "ERR_FAILED (umumiy xato — adapter band yoki boshqa dasturda ochiq bo'lishi mumkin)";
+                case 0x08: return "ERR_DEVICE_NOT_CONNECTED (adapter ulanmagan YOKI boshqa dasturda band — boshqa dasturni yoping)";
+                case 0x09: return "ERR_TIMEOUT (javob kelmadi)";
+                case 0x0A: return "ERR_INVALID_MSG (xabar noto'g'ri)";
+                case 0x0B: return "ERR_INVALID_TIME_INTERVAL";
+                case 0x0C: return "ERR_EXCEEDED_LIMIT";
+                case 0x0D: return "ERR_INVALID_MSG_ID";
+                case 0x0E: return "ERR_DEVICE_IN_USE (adapter boshqa dasturda band — o'sha dasturni yoping)";
+                case 0x10: return "ERR_NOT_SUPPORTED";
+                case 0x11: return "ERR_NO_FLOW_CONTROL";
+                case 0x19: return "ERR_BUFFER_EMPTY";
+                default: return "J2534 xato kodi 0x" + code.ToString("X2");
+            }
         }
 
         public void Connect(uint baud)
@@ -729,5 +749,69 @@ namespace DelphiMT60
         [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr LoadLibrary(string lpFileName);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool FreeLibrary(IntPtr hModule);
+    }
+
+    // =========================================================================================
+    //  J2534 adapterlarni Windows registridan AVTOMATIK topish
+    //  (PassThruSupport.04.04 — har bir o'rnatilgan J2534 shu yerga yoziladi)
+    // =========================================================================================
+    public class J2534Device
+    {
+        public string Name;
+        public string Vendor;
+        public string DllPath;
+        public override string ToString()
+        {
+            return (string.IsNullOrEmpty(Vendor) ? "" : Vendor + " — ") + Name;
+        }
+    }
+
+    public static class J2534Registry
+    {
+        // Barcha o'rnatilgan J2534 adapterlarni qaytaradi (32 va 64 bit ko'rinishlardan).
+        public static List<J2534Device> List()
+        {
+            var list = new List<J2534Device>();
+            AddView(list, RegistryView.Registry32);
+            AddView(list, RegistryView.Registry64);
+            return list;
+        }
+
+        private static void AddView(List<J2534Device> list, RegistryView view)
+        {
+            try
+            {
+                using (RegistryKey bas = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
+                using (RegistryKey root = bas.OpenSubKey(@"SOFTWARE\PassThruSupport.04.04"))
+                {
+                    if (root == null) return;
+                    foreach (string sub in root.GetSubKeyNames())
+                    {
+                        using (RegistryKey k = root.OpenSubKey(sub))
+                        {
+                            if (k == null) continue;
+                            string dll = k.GetValue("FunctionLibrary") as string;
+                            string name = k.GetValue("Name") as string;
+                            string vendor = k.GetValue("Vendor") as string;
+                            if (string.IsNullOrEmpty(dll)) continue;
+                            if (!File.Exists(dll)) continue;
+
+                            bool dup = false;
+                            foreach (J2534Device d in list)
+                                if (string.Equals(d.DllPath, dll, StringComparison.OrdinalIgnoreCase)) { dup = true; break; }
+                            if (dup) continue;
+
+                            list.Add(new J2534Device
+                            {
+                                Name = string.IsNullOrEmpty(name) ? sub : name,
+                                Vendor = vendor ?? "",
+                                DllPath = dll
+                            });
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
     }
 }

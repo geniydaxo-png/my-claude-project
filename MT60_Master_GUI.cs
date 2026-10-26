@@ -31,7 +31,10 @@ namespace DelphiMT60
         private volatile bool _busy;
 
         private TextBox _txtLog;
-        private TextBox _txtDll;
+        private ComboBox _cmbDev;
+        private List<J2534Device> _devices = new List<J2534Device>();
+        private string _manualDll;
+        private string _loadedDll;
         private ProgressBar _bar;
         private Label _lblStatus;
         private Label _lblConn;
@@ -48,7 +51,8 @@ namespace DelphiMT60
 
             BuildUi();
             Log("JAM DELPHI MT60 MASTER v2 ishga tushirildi.");
-            Log("Avval J2534 DLL manzilini tekshiring, so'ng ULANISH.");
+            RefreshDevices();
+            Log("Adapterni tanlang (avtomatik topildi) va ULANISH bosing.");
         }
 
         private void BuildUi()
@@ -90,20 +94,29 @@ namespace DelphiMT60
             left.Dock = DockStyle.Left; left.Width = 268; left.BackColor = BG; left.Padding = new Padding(16, 12, 12, 12);
 
             Label dllLbl = new Label();
-            dllLbl.Text = "J2534 DLL:"; dllLbl.ForeColor = MUTED; dllLbl.AutoSize = true;
+            dllLbl.Text = "J2534 adapter (avtomatik):"; dllLbl.ForeColor = MUTED; dllLbl.AutoSize = true;
             dllLbl.Location = new Point(16, 8);
-            _txtDll = new TextBox();
-            _txtDll.Text = @"C:\Program Files (x86)\Scanmatik\smj2534.dll";
-            _txtDll.Location = new Point(16, 28); _txtDll.Size = new Size(236, 24);
-            _txtDll.BackColor = LOGBG; _txtDll.ForeColor = TXT; _txtDll.BorderStyle = BorderStyle.FixedSingle;
+            _cmbDev = new ComboBox();
+            _cmbDev.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbDev.Location = new Point(16, 28); _cmbDev.Size = new Size(236, 24);
+            _cmbDev.BackColor = LOGBG; _cmbDev.ForeColor = TXT; _cmbDev.FlatStyle = FlatStyle.Flat;
+            Button btnRefresh = new Button();
+            btnRefresh.Text = "↻ Yangilash"; StyleBtn(btnRefresh, GRAY);
+            btnRefresh.Location = new Point(16, 56); btnRefresh.Size = new Size(140, 28);
+            btnRefresh.Click += delegate { RefreshDevices(); };
             Button btnBrowse = new Button();
-            btnBrowse.Text = "DLL tanlash..."; StyleBtn(btnBrowse, GRAY);
-            btnBrowse.Location = new Point(16, 56); btnBrowse.Size = new Size(236, 28);
+            btnBrowse.Text = "DLL..."; StyleBtn(btnBrowse, GRAY);
+            btnBrowse.Location = new Point(160, 56); btnBrowse.Size = new Size(92, 28);
             btnBrowse.Click += delegate {
                 OpenFileDialog d = new OpenFileDialog(); d.Filter = "J2534 DLL|*.dll|Barcha|*.*";
-                if (d.ShowDialog() == DialogResult.OK) _txtDll.Text = d.FileName;
+                if (d.ShowDialog() == DialogResult.OK) {
+                    _manualDll = d.FileName;
+                    J2534Device md = new J2534Device(); md.Name = "Qo'lda: " + Path.GetFileName(d.FileName); md.DllPath = d.FileName;
+                    _cmbDev.Items.Add(md); _cmbDev.SelectedItem = md;
+                    Log("Qo'lda DLL tanlandi: " + d.FileName);
+                }
             };
-            left.Controls.Add(dllLbl); left.Controls.Add(_txtDll); left.Controls.Add(btnBrowse);
+            left.Controls.Add(dllLbl); left.Controls.Add(_cmbDev); left.Controls.Add(btnRefresh); left.Controls.Add(btnBrowse);
 
             _btns = new FlowLayoutPanel();
             _btns.Location = new Point(16, 94); _btns.Size = new Size(240, 420);
@@ -205,14 +218,41 @@ namespace DelphiMT60
             t.IsBackground = true; t.Start();
         }
 
+        private void RefreshDevices()
+        {
+            _devices = J2534Registry.List();
+            _cmbDev.Items.Clear();
+            foreach (J2534Device d in _devices) _cmbDev.Items.Add(d);
+            if (_cmbDev.Items.Count > 0)
+            {
+                _cmbDev.SelectedIndex = 0;
+                Log("Topilgan J2534 adapter(lar): " + _devices.Count);
+                foreach (J2534Device d in _devices) Log("   • " + d + "   [" + d.DllPath + "]");
+            }
+            else
+            {
+                Log("J2534 adapter registrda topilmadi. Drayver o'rnatilganmi? 'DLL...' orqali qo'lda ko'rsating.");
+            }
+        }
+
+        private string SelectedDll()
+        {
+            J2534Device d = _cmbDev.SelectedItem as J2534Device;
+            if (d != null) return d.DllPath;
+            return _manualDll;
+        }
+
         private void EnsureClient()
         {
-            if (_client == null)
-            {
-                string dll = _txtDll.Text.Trim().Trim('"');
-                if (!File.Exists(dll)) throw new FileNotFoundException("J2534 DLL topilmadi: " + dll);
-                _client = new DelphiMt60Client(dll, Log);
-            }
+            string dll = SelectedDll();
+            if (string.IsNullOrEmpty(dll) || !File.Exists(dll))
+                throw new Exception("J2534 adapter tanlanmagan/topilmagan. 'Yangilash' bosing yoki adapterni ulang.");
+
+            // Tanlangan adapter o'zgarsa — mijozni qayta yaratamiz
+            if (_client != null && _loadedDll == dll) return;
+            if (_client != null) { try { _client.Dispose(); } catch { } _client = null; }
+            _client = new DelphiMt60Client(dll, Log);
+            _loadedDll = dll;
         }
 
         private void NeedConn() { if (!_connected) throw new Exception("Avval ULANING (1-tugma)."); }
