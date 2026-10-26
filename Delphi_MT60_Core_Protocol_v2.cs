@@ -131,6 +131,54 @@ namespace DelphiMT60
             return p;
         }
 
+        // Scanmatik "Pasport" ko'rinishidagi jadval: [label, qiymat] qatorlar.
+        public List<string[]> ReadPassportTable()
+        {
+            var rows = new List<string[]>();
+            string vin = ReadDidAscii(0x90, 17);
+            if (string.IsNullOrEmpty(vin)) vin = ReadDidAscii(0x28, 17);
+            rows.Add(new string[] { "VIN (avtomobil raqami)", string.IsNullOrEmpty(vin) ? "-" : vin });
+
+            AddGmNum(rows, "Yakuniy model qism raqami", 0xCB);
+            AddGmNum(rows, "Bazaviy model qism raqami", 0xCC);
+            AddGmNum(rows, "Dasturiy modul 1 ID", 0xC1);
+            AddGmNum(rows, "Dasturiy modul 2 ID", 0xC2);
+
+            string hw = ReadDidAscii(0x92, -1); if (!string.IsNullOrEmpty(hw)) rows.Add(new string[] { "Apparat (HW)", hw });
+            string eng = ReadDidAscii(0x97, -1); if (!string.IsNullOrEmpty(eng)) rows.Add(new string[] { "Dvigatel", eng });
+            string cal = ReadDidAscii(0x98, -1); if (!string.IsNullOrEmpty(cal)) rows.Add(new string[] { "Kalibrovka", cal });
+            string dt = ReadDidDate(0x99); if (dt != null) rows.Add(new string[] { "Dasturlash sanasi", dt });
+            return rows;
+        }
+
+        private string ReadDidAscii(byte did, int len)
+        {
+            byte[] r = _transport.SendAndReceive(new byte[] { 0x1A, did });
+            if (r == null || r.Length < 3 || r[0] != 0x5A || r[1] != did) return null;
+            int n = (len > 0) ? Math.Min(len, r.Length - 2) : r.Length - 2;
+            string s = Encoding.ASCII.GetString(r, 2, n);
+            // ko'rinmaydigan belgilarni tozalash
+            var sb = new StringBuilder();
+            foreach (char c in s) if (c >= 32 && c < 127) sb.Append(c);
+            return sb.ToString().Trim();
+        }
+
+        private void AddGmNum(List<string[]> rows, string label, byte did)
+        {
+            byte[] r = _transport.SendAndReceive(new byte[] { 0x1A, did });
+            if (r == null || r.Length < 6 || r[0] != 0x5A || r[1] != did) return;
+            uint v = (uint)((r[2] << 24) | (r[3] << 16) | (r[4] << 8) | r[5]);
+            if (v == 0) return;
+            rows.Add(new string[] { label, v.ToString() });
+        }
+
+        private string ReadDidDate(byte did)
+        {
+            byte[] r = _transport.SendAndReceive(new byte[] { 0x1A, did });
+            if (r == null || r.Length < 6 || r[0] != 0x5A) return null;
+            return string.Format("{0:X2}{1:X2}-{2:X2}-{3:X2}", r[2], r[3], r[4], r[5]);
+        }
+
         #endregion
 
         #region 2. Xavfsizlik (SecurityAccess 0x27) — algoritm v1 BILAN BIR XIL

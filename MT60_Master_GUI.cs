@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -363,6 +364,61 @@ namespace DelphiMT60
         }
 
         private void DoIdent()
+        {
+            RunBg("Ident o'qish", delegate ()
+            {
+                NeedConn();
+                List<string[]> rows = _client.ReadPassportTable();
+                Log("--- EBU PASPORTI ---");
+                foreach (string[] r in rows) Log(string.Format("  {0,-26}: {1}", r[0], r[1]));
+                ShowPassport(rows);
+            });
+        }
+
+        private void ShowPassport(List<string[]> rows)
+        {
+            if (InvokeRequired) { Invoke(new Action<List<string[]>>(ShowPassport), rows); return; }
+            Form f = new Form();
+            f.Text = "EBU Pasporti — Delphi MT60";
+            f.ClientSize = new Size(580, 420); f.StartPosition = FormStartPosition.CenterParent;
+            f.BackColor = BG; f.FormBorderStyle = FormBorderStyle.FixedDialog; f.MaximizeBox = false; f.MinimizeBox = false;
+
+            ListView lv = new ListView();
+            lv.Dock = DockStyle.Fill; lv.View = View.Details; lv.FullRowSelect = true; lv.GridLines = true;
+            lv.BackColor = LOGBG; lv.ForeColor = TXT; lv.Font = new Font("Segoe UI", 10f); lv.BorderStyle = BorderStyle.None;
+            lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            lv.Columns.Add("Parametr", 250); lv.Columns.Add("Qiymat", 310);
+            foreach (string[] r in rows)
+            {
+                ListViewItem it = new ListViewItem(r[0]); it.SubItems.Add(r[1]); lv.Items.Add(it);
+            }
+
+            Panel bottom = new Panel(); bottom.Dock = DockStyle.Bottom; bottom.Height = 50; bottom.BackColor = PANEL;
+            Button save = new Button(); save.Text = "Saqlash (.txt)"; StyleBtn(save, BLUE); save.Size = new Size(140, 32); save.Location = new Point(300, 9);
+            Button close = new Button(); close.Text = "Yopish"; StyleBtn(close, GRAY); close.Size = new Size(120, 32); close.Location = new Point(448, 9);
+            close.Click += delegate { f.Close(); };
+            save.Click += delegate
+            {
+                SaveFileDialog sfd = new SaveFileDialog(); sfd.Filter = "Matn|*.txt"; sfd.FileName = "pasport.txt";
+                if (sfd.ShowDialog() == DialogResult.OK)
+                {
+                    StringBuilder sb = new StringBuilder();
+                    foreach (string[] r in rows) sb.AppendLine(r[0] + ": " + r[1]);
+                    File.WriteAllText(sfd.FileName, sb.ToString());
+                }
+            };
+            bottom.Controls.Add(save); bottom.Controls.Add(close);
+
+            Label hdr = new Label();
+            hdr.Text = "EBU PASPORTI"; hdr.Dock = DockStyle.Top; hdr.Height = 36;
+            hdr.ForeColor = TXT; hdr.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+            hdr.TextAlign = ContentAlignment.MiddleCenter; hdr.BackColor = PANEL;
+
+            f.Controls.Add(lv); f.Controls.Add(bottom); f.Controls.Add(hdr);
+            f.ShowDialog();
+        }
+
+        private void DoIdentLog()
         {
             RunBg("Ident o'qish", delegate ()
             {
