@@ -34,6 +34,7 @@ namespace DelphiMT60
         private ComboBox _cmbDev;
         private List<J2534Device> _devices = new List<J2534Device>();
         private string _manualDll;
+        private readonly string _cfgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mt60_adapter.cfg");
         private ProgressBar _bar;
         private Label _lblStatus;
         private Label _lblConn;
@@ -225,16 +226,44 @@ namespace DelphiMT60
             J2534Device auto = new J2534Device(); auto.Name = "Avto — ulangan adapterni top"; auto.DllPath = null;
             _cmbDev.Items.Add(auto);
             foreach (J2534Device d in _devices) _cmbDev.Items.Add(d);
-            _cmbDev.SelectedIndex = 0; // Avto default
+
+            // Standart tanlov: 1) oxirgi ishlatilgan  2) Scanmatik SM2  3) Avto
+            int def = 0; // Avto
+            string saved = LoadSavedDll();
+            if (!string.IsNullOrEmpty(saved))
+                for (int i = 0; i < _devices.Count; i++)
+                    if (string.Equals(_devices[i].DllPath, saved, StringComparison.OrdinalIgnoreCase)) { def = i + 1; break; }
+            if (def == 0)
+                for (int i = 0; i < _devices.Count; i++)
+                {
+                    string low = _devices[i].DllPath.ToLower();
+                    if (low.EndsWith("smj2534.dll")) { def = i + 1; break; }        // Scanmatik SM2
+                }
+            _cmbDev.SelectedIndex = Math.Min(def, _cmbDev.Items.Count - 1);
+
             if (_devices.Count > 0)
             {
-                Log("Topilgan J2534 adapter(lar): " + _devices.Count + "  (ULANISH -> Avto o'zi ulanganini tanlaydi)");
+                Log("Topilgan J2534 adapter(lar): " + _devices.Count);
                 foreach (J2534Device d in _devices) Log("   • " + d + "   [" + d.DllPath + "]");
+                J2534Device cur = _cmbDev.SelectedItem as J2534Device;
+                if (cur != null && !string.IsNullOrEmpty(cur.DllPath)) Log("Tanlandi: " + cur.Name + " (kerak bo'lsa ro'yxatdan o'zgartiring).");
+                else Log("DIQQAT: 'Avto' 16 ta adapterni sinaydi va ba'zi drayverlar oynasi ochilishi mumkin. Yaxshisi ro'yxatdan Scanmatik'ni tanlang.");
             }
             else
             {
                 Log("J2534 adapter registrda topilmadi. Drayver o'rnatilganmi? 'DLL...' orqali qo'lda ko'rsating.");
             }
+        }
+
+        private string LoadSavedDll()
+        {
+            try { return File.Exists(_cfgPath) ? File.ReadAllText(_cfgPath).Trim() : null; }
+            catch { return null; }
+        }
+
+        private void SaveDll(string dll)
+        {
+            try { File.WriteAllText(_cfgPath, dll); } catch { }
         }
 
         private void SwapClient(DelphiMt60Client c)
@@ -253,6 +282,7 @@ namespace DelphiMT60
                 c = new DelphiMt60Client(d.DllPath, Log);
                 c.Connect();
                 SwapClient(c);
+                SaveDll(d.DllPath);   // keyingi safar shu adapter avtomatik tanlanadi
                 return true;
             }
             catch (Exception ex)
