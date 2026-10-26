@@ -33,10 +33,10 @@ namespace DelphiMT60
         // Noto'g'ri kalit bilan EBUni bloklamaslik uchun — urinishlar chegarasi.
         public const int MAX_SECURITY_ATTEMPTS = 2;
 
-        // SPS log ISBOTI: GM DPS ham Seed != 0 bo'lganda kalit (27 02) YUBORMAYDI.
-        // Algoritm tasdiqlanmagan. Default: noldan farqli seedda kalit yuborilmaydi (bloklanish xavfi = 0).
-        // Faqat aniq zarur bo'lsa va xavfni tushunib true qiling.
-        public bool SendKeyOnNonZeroSeed = false;
+        // ISBOT (MT60_Master.exe dekompilyatsiyasi, DelphiMt60EepromClient): haqiqiy ishlaydigan
+        // dastur Seed != 0 bo'lganda $27 02 bilan HISOBLANGAN kalitni YUBORADI va o'qiydi.
+        // Algoritm (B(seed), baza 0x4AD0) shu EBU uchun TO'G'RI. Shuning uchun default = true.
+        public bool SendKeyOnNonZeroSeed = true;
 
         private readonly J2534Transport _transport;
         private readonly Action<string> _logger;
@@ -305,10 +305,17 @@ namespace DelphiMT60
 
         public bool UploadRamBootloader(byte[] boot)
         {
-            // GM Programming Mode: shundan keyin seed 0x0000 (ochiq) bo'lishi kerak
-            EnterProgrammingMode();
+            byte nrc0;
+            _logger("[BOOT] 1-bosqich: $10 02 (Programming session)...");
+            byte[] r1 = _transport.SendAndReceive(new byte[] { 0x10, 0x02 });
+            if (IsNegative(r1, out nrc0)) { _logger(string.Format("[BOOT] $10 02 rad etildi (NRC 0x{0:X2}).", nrc0)); return false; }
+            Thread.Sleep(40);
 
-            _logger("[BOOT] 3-bosqich: Security Access...");
+            _logger("[BOOT] 2-bosqich: $10 85 (High-speed)...");
+            _transport.SendAndReceive(new byte[] { 0x10, 0x85 });
+            Thread.Sleep(40);
+
+            _logger("[BOOT] 3-bosqich: Security Access (kalit yuboriladi)...");
             if (!UnlockSecurityAccess(0x01)) { _logger("[BOOT] Xavfsizlik ochilmadi."); return false; }
 
             _logger("[BOOT] 4-bosqich: $34 RequestDownload...");
